@@ -12,9 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,21 +20,20 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Transactional
 public class OrderService {
-    
+
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final ProcessingStatusRepository processingStatusRepository;
-    
+
     @Transactional(readOnly = true)
     public List<Order> getAllOrders() {
         return orderRepository.findAll();
     }
-    
+
     @Transactional(readOnly = true)
     public Optional<Order> getOrderById(Long id) {
         return orderRepository.findById(id);
     }
-    
 
     public Order updateOrder(Long id, Order order) {
         if (!orderRepository.existsById(id)) {
@@ -45,7 +42,7 @@ public class OrderService {
         order.setId(id);
         return orderRepository.save(order);
     }
-    
+
     public void deleteOrder(Long id) {
         if (!orderRepository.existsById(id)) {
             throw new RuntimeException("Order not found with id: " + id);
@@ -53,18 +50,47 @@ public class OrderService {
         orderRepository.deleteById(id);
     }
 
+    @Transactional
+    public Order placeOrder(String customerName, String customerEmail, List<Long> productIds,
+            List<Integer> quantities) {
+        if (productIds == null || quantities == null || productIds.size() != quantities.size()) {
+            throw new IllegalArgumentException("상품 목록과 수량 목록이 올바르지 않습니다.");
+        }
 
+        Order order = Order.builder()
+                .customerName(customerName)
+                .customerEmail(customerEmail)
+                .status(Order.OrderStatus.PENDING)
+                .orderDate(LocalDateTime.now())
+                .build();
 
-    public Order placeOrder(String customerName, String customerEmail, List<Long> productIds, List<Integer> quantities) {
-        // TODO #3: 구현 항목
-        // * 주어진 고객 정보로 새 Order를 생성
-        // * 지정된 Product를 주문에 추가
-        // * order 의 상태를 PENDING 으로 변경
-        // * orderDate 를 현재시간으로 설정
-        // * order 를 저장
-        // * 각 Product 의 재고를 수정
-        // * placeOrder 메소드의 시그니처는 변경하지 않은 채 구현하세요.
-        return null;
+        for (int i = 0; i < productIds.size(); i++) {
+            Long productId = productIds.get(i);
+            Integer quantity = quantities.get(i);
+
+            Product product = productRepository.findById(productId)
+                    .orElseThrow(() -> new RuntimeException("상품을 찾을 수 없습니다. id=" + productId));
+
+            if (quantity == null || quantity <= 0) {
+                throw new IllegalArgumentException("수량은 1 이상이어야 합니다.");
+            }
+
+            if (product.getStockQuantity() < quantity) {
+                throw new RuntimeException("재고가 부족합니다. productId=" + productId);
+            }
+
+            OrderItem orderItem = OrderItem.builder()
+                    .product(product)
+                    .quantity(quantity)
+                    .build();
+
+            order.addItem(orderItem);
+
+            product.setStockQuantity(product.getStockQuantity() - quantity);
+            productRepository.save(product);
+        }
+
+        return orderRepository.save(order);
     }
 
     /**
@@ -73,9 +99,10 @@ public class OrderService {
      * - #3 에서 추가한 도메인 메소드가 있을 경우 사용해도 됩니다.
      */
     public Order checkoutOrder(String customerName,
-                               String customerEmail,
-                               List<OrderProduct> orderProducts,
-                               String couponCode) {
+            String customerEmail,
+            List<OrderProduct> orderProducts,
+            String couponCode) {
+
         if (customerName == null || customerEmail == null) {
             throw new IllegalArgumentException("customer info required");
         }
@@ -83,23 +110,15 @@ public class OrderService {
             throw new IllegalArgumentException("orderReqs invalid");
         }
 
-        Order order = Order.builder()
-                .customerName(customerName)
-                .customerEmail(customerEmail)
-                .status(Order.OrderStatus.PENDING)
-                .orderDate(LocalDateTime.now())
-                .items(new ArrayList<>())
-                .totalAmount(BigDecimal.ZERO)
-                .build();
+        Order order = Order.create(customerName, customerEmail);
 
-
-        BigDecimal subtotal = BigDecimal.ZERO;
         for (OrderProduct req : orderProducts) {
             Long pid = req.getProductId();
             int qty = req.getQuantity();
 
             Product product = productRepository.findById(pid)
                     .orElseThrow(() -> new IllegalArgumentException("Product not found: " + pid));
+
             if (qty <= 0) {
                 throw new IllegalArgumentException("quantity must be positive: " + qty);
             }
@@ -107,23 +126,11 @@ public class OrderService {
                 throw new IllegalStateException("insufficient stock for product " + pid);
             }
 
-            OrderItem item = OrderItem.builder()
-                    .order(order)
-                    .product(product)
-                    .quantity(qty)
-                    .price(product.getPrice())
-                    .build();
-            order.getItems().add(item);
-
+            order.addOrderItem(product, qty);
             product.decreaseStock(qty);
-            subtotal = subtotal.add(product.getPrice().multiply(BigDecimal.valueOf(qty)));
         }
 
-        BigDecimal shipping = subtotal.compareTo(new BigDecimal("100.00")) >= 0 ? BigDecimal.ZERO : new BigDecimal("5.00");
-        BigDecimal discount = (couponCode != null && couponCode.startsWith("SALE")) ? new BigDecimal("10.00") : BigDecimal.ZERO;
-
-        order.setTotalAmount(subtotal.add(shipping).subtract(discount));
-        order.setStatus(Order.OrderStatus.PROCESSING);
+        order.checkout(couponCode);
         return orderRepository.save(order);
     }
 
@@ -132,6 +139,14 @@ public class OrderService {
      * - 시나리오: 일괄 배송 처리(장시간 작업이라고 가정함) 중 진행률을 저장하여 다른 사용자가 변화하는 진행률을 조회 가능해야 함.
      * - 리뷰 포인트: proxy 및 transaction 분리, 예외 전파/롤백 범위, 가독성 등
      * - 상식적인 수준에서 요구사항(기획)을 가정하며 최대한 상세히 작성하세요.
+     * 이 코드는 진행률을 중간 저장하려는 의도는 좋지만,
+     * 같은 클래스 내부에서 this.updateProgressRequiresNew()를 호출하면 스프링 프록시를 거치지 않아
+     * REQUIRES_NEW가 적용되지 않을 수 있습니다.
+     * 따라서 진행률 저장은 별도 서비스로 분리해야 합니다.
+     * 또한 catch (Exception e) {}처럼 예외를 무시하면 실패 원인 추적이 불가능하므로 로그 기록과 실패 상태 반영이 필요합니다.
+     * 부모 메서드는 장시간 작업의 흐름만 담당하고,
+     * 주문 1건 처리와 진행률 저장은 각각 독립 트랜잭션으로 분리하는 것이 롤백 범위를 명확히 하고 다른 사용자가 중간 진행률을 조회할 수 있게
+     * 하는 데 적합합니다.
      */
     @Transactional
     public void bulkShipOrdersParent(String jobId, List<Long> orderIds) {

@@ -1,9 +1,10 @@
 package com.seowon.coding.domain.model;
 
-
 import lombok.Builder;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 class PermissionChecker {
 
@@ -17,32 +18,56 @@ class PermissionChecker {
             String targetAction,
             List<User> users,
             List<UserGroup> groups,
-            List<Policy> policies
-    ) {
-        for (User user : users) {
-            if (user.id.equals(userId)) {
-                for (String groupId : user.groupIds) {
-                    for (UserGroup group : groups) {
-                        if (group.id.equals(groupId)) {
-                            for (String policyId : group.policyIds) {
-                                for (Policy policy : policies) {
-                                    if (policy.id.equals(policyId)) {
-                                        for (Statement statement : policy.statements) {
-                                            if (statement.actions.contains(targetAction) &&
-                                                statement.resources.contains(targetResource)) {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            List<Policy> policies) {
+        if (userId == null || targetResource == null || targetAction == null) {
+            return false;
+        }
+        if (users == null || groups == null || policies == null) {
+            return false;
+        }
+
+        Map<String, User> userMap = users.stream()
+                .collect(Collectors.toMap(user -> user.id, user -> user, (a, b) -> a));
+
+        Map<String, UserGroup> groupMap = groups.stream()
+                .collect(Collectors.toMap(group -> group.id, group -> group, (a, b) -> a));
+
+        Map<String, Policy> policyMap = policies.stream()
+                .collect(Collectors.toMap(policy -> policy.id, policy -> policy, (a, b) -> a));
+
+        User user = userMap.get(userId);
+        if (user == null || user.groupIds == null) {
+            return false;
+        }
+
+        for (String groupId : user.groupIds) {
+            UserGroup group = groupMap.get(groupId);
+            if (group == null || group.policyIds == null) {
+                continue;
+            }
+
+            for (String policyId : group.policyIds) {
+                Policy policy = policyMap.get(policyId);
+                if (policy == null || policy.statements == null) {
+                    continue;
+                }
+
+                for (Statement statement : policy.statements) {
+                    if (statement == null || statement.actions == null || statement.resources == null) {
+                        continue;
+                    }
+
+                    if (statement.actions.contains(targetAction)
+                            && statement.resources.contains(targetResource)) {
+                        return true;
                     }
                 }
             }
         }
+
         return false;
     }
+
 }
 
 class User {

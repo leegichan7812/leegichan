@@ -2,7 +2,10 @@ package com.seowon.coding.controller;
 
 import com.seowon.coding.domain.model.Order;
 import com.seowon.coding.service.OrderService;
+import com.seowon.coding.dto.OrderProductRequest;
+import com.seowon.coding.dto.OrderRequest;
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,14 +16,14 @@ import java.util.List;
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
 public class OrderController {
-    
+
     private final OrderService orderService;
-    
+
     @GetMapping
     public ResponseEntity<List<Order>> getAllOrders() {
         return ResponseEntity.ok(orderService.getAllOrders());
     }
-    
+
     @GetMapping("/{id}")
     public ResponseEntity<Order> getOrderById(@PathVariable Long id) {
         return orderService.getOrderById(id)
@@ -37,7 +40,7 @@ public class OrderController {
             return ResponseEntity.notFound().build();
         }
     }
-    
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteOrder(@PathVariable Long id) {
         try {
@@ -47,7 +50,7 @@ public class OrderController {
             return ResponseEntity.notFound().build();
         }
     }
-    
+
     /**
      * TODO #2: 주문을 생성하는 API 구현
      * 구현목록:
@@ -58,13 +61,31 @@ public class OrderController {
      * 
      * Request body 예시:
      * {
-     *   "customerName": "John Doe",
-     *   "customerEmail": "john@example.com",
-     *   "products": [
-     *     {"productId": 1, "quantity": 2},
-     *     {"productId": 3, "quantity": 1}
-     *   ]
+     * "customerName": "John Doe",
+     * "customerEmail": "john@example.com",
+     * "products": [
+     * {"productId": 1, "quantity": 2},
+     * {"productId": 3, "quantity": 1}
+     * ]
      * }
      */
     //
+    @PostMapping
+    public ResponseEntity<Void> createOrder(@RequestBody OrderRequest request) {
+        List<Long> productIds = request.getProducts().stream()
+                .map(OrderProductRequest::getProductId)
+                .toList();
+
+        List<Integer> quantities = request.getProducts().stream()
+                .map(OrderProductRequest::getQuantity)
+                .toList();
+
+        orderService.placeOrder(
+                request.getCustomerName(),
+                request.getCustomerEmail(),
+                productIds,
+                quantities);
+
+        return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
 }
